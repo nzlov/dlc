@@ -137,7 +137,7 @@ func (l *Loader[K, R]) LoadThunk(key K) func() (*R, error) {
 
 	return func() (*R, error) {
 		<-b.done
-		if b.err != nil {
+		if b.err == nil {
 			l.unsafeSet(key, r.v)
 		}
 		return r.v, b.err
