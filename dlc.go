@@ -83,12 +83,11 @@ func NewLoader[K comparable, R any](config Config, cache Cache, f Fetch[K, R]) *
 }
 
 type batch[K comparable, R any] struct {
-	l       *Loader[K, R]
-	query   chan *result[K, R]
-	err     error
-	closing bool
-	done    chan struct{}
-	wg      *sync.WaitGroup
+	l     *Loader[K, R]
+	query chan *result[K, R]
+	err   error
+	done  chan struct{}
+	wg    *sync.WaitGroup
 }
 
 func (l *Loader[K, R]) Key(key K) string {
