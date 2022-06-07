@@ -110,8 +110,7 @@ func (l *Loader[K, R]) cb() {
 		l.t = time.NewTimer(l.wait)
 	}
 	<-l.t.C
-	fmt.Println("cb")
-    l.batch.stop()
+	l.batch.stop()
 	l.batch = nil
 	l.t = nil
 }
@@ -130,14 +129,14 @@ func (l *Loader[K, R]) LoadThunk(key K) func() (*R, error) {
 	l.lock.Lock()
 	b := l.batch
 	if b == nil || !b.running {
-		b = newbatch(l, 1000)
+		b = newbatch(l, l.maxBatch)
 		l.batch = b
 		go l.cb()
 	}
 	b.n++
 	if b.n >= l.maxBatch {
 		b.stop()
-		b = newbatch(l, 1000)
+		b = newbatch(l, l.maxBatch)
 		l.batch = b
 		go l.cb()
 	}
