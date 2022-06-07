@@ -68,6 +68,7 @@ type Loader[K comparable, R any] struct {
 
 	batch *batch[K, R]
 	lock  *sync.Mutex
+	t     *time.Timer
 }
 
 func NewLoader[K comparable, R any](config Config, cache Cache, f Fetch[K, R]) *Loader[K, R] {
@@ -83,11 +84,12 @@ func NewLoader[K comparable, R any](config Config, cache Cache, f Fetch[K, R]) *
 }
 
 type batch[K comparable, R any] struct {
-	l     *Loader[K, R]
-	query chan *result[K, R]
-	err   error
-	done  chan struct{}
-	wg    *sync.WaitGroup
+	l       *Loader[K, R]
+	running bool
+	query   chan *result[K, R]
+	err     error
+	done    chan struct{}
+	n       int
 }
 
 func (l *Loader[K, R]) Key(key K) string {
@@ -101,21 +103,17 @@ func (c Config) WithPrefix(p string) Config {
 }
 
 func (l *Loader[K, R]) cb() {
-	l.lock.Lock()
-	l.batch = nil
-	l.lock.Unlock()
-}
-
-func (l *Loader[K, R]) gb() *batch[K, R] {
-	l.lock.Lock()
-	b := l.batch
-	if b == nil {
-		b = newbatch(l, 1000)
-		l.batch = b
+	if l.t != nil {
+		l.t.Reset(l.wait)
+		return
+	} else {
+		l.t = time.NewTimer(l.wait)
 	}
-	b.wg.Add(1)
-	l.lock.Unlock()
-	return b
+	<-l.t.C
+	fmt.Println("cb")
+    l.batch.stop()
+	l.batch = nil
+	l.t = nil
 }
 
 // Load a  by key, batching and caching will be applied automatically
@@ -129,11 +127,25 @@ func (l *Loader[K, R]) LoadThunk(key K) func() (*R, error) {
 			return loaderWithBytes[R](it)
 		}
 	}
-	b := l.gb()
+	l.lock.Lock()
+	b := l.batch
+	if b == nil || !b.running {
+		b = newbatch(l, 1000)
+		l.batch = b
+		go l.cb()
+	}
+	b.n++
+	if b.n >= l.maxBatch {
+		b.stop()
+		b = newbatch(l, 1000)
+		l.batch = b
+		go l.cb()
+	}
 	r := &result[K, R]{
 		k: key,
 	}
 	b.query <- r
+	l.lock.Unlock()
 
 	return func() (*R, error) {
 		<-b.done
@@ -202,45 +214,34 @@ func loaderWithBytes[T any](value []byte) (*T, error) {
 	return o, json.Unmarshal(value, o)
 }
 
+var i int32
+
 func newbatch[K comparable, R any](l *Loader[K, R], ql int) *batch[K, R] {
 	b := &batch[K, R]{
-		done:  make(chan struct{}),
-		l:     l,
-		query: make(chan *result[K, R], ql),
-		wg:    &sync.WaitGroup{},
+		done:    make(chan struct{}),
+		l:       l,
+		query:   make(chan *result[K, R], ql),
+		running: true,
 	}
 	go b.start()
 	return b
 }
 
+func (b *batch[K, R]) stop() {
+	if !b.running {
+		return
+	}
+	b.running = false
+	close(b.query)
+}
+
 func (b *batch[K, R]) start() {
 	rs := []*result[K, R]{}
 	keys := []K{}
-	t := time.After(time.Millisecond * 10)
-L:
-	for {
-		select {
-		case r := <-b.query:
-			keys = append(keys, r.k)
-			rs = append(rs, r)
-			b.wg.Done()
-			if len(rs) > b.l.maxBatch {
-				b.l.cb()
-				break L
-			}
-		case <-t:
-			b.l.cb()
-			break L
-		}
-	}
-	go func() {
-		b.wg.Wait()
-		close(b.query)
-	}()
+
 	for r := range b.query {
 		rs = append(rs, r)
 		keys = append(keys, r.k)
-		b.wg.Done()
 	}
 
 	vs, err := b.l.fetch(keys)

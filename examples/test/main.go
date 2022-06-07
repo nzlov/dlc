@@ -40,9 +40,9 @@ func (c *_cache) Out() {
 
 func main() {
 	config := dlc.Config{
-		Wait:      time.Millisecond,
+		Wait:      time.Millisecond * 100,
 		CacheTime: time.Minute,
-		MaxBatch:  100,
+		MaxBatch:  50,
 		Prefix:    "a",
 	}
 	cache := &_cache{
@@ -74,6 +74,7 @@ func main() {
 					panic(fmt.Sprintf("j[%v]<>v[%v]", j, *v))
 				}
 			}
+			fmt.Println(i, "end")
 		}(i)
 	}
 	wg.Wait()
